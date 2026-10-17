@@ -1,0 +1,16 @@
+{
+  "name": "洋書リーダー",
+  "short_name": "洋書リーダー",
+  "description": "Project Gutenberg の名作を原文で読み、AIで翻訳・語句の意味・あらすじを調べられる読書アプリ",
+  "lang": "ja",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#F1F2EF",
+  "theme_color": "#2E5E4E",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
