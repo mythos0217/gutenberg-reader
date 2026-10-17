@@ -1,1 +1,81 @@
+# Project Gutenberg の作品目録と人気ランキングを取得して catalog.json を作り、このリポジトリに保存する。
+# 毎週月曜の朝（日本時間）と、手動実行（Actions →「目録を更新」→ Run workflow）で動く。
+name: 目録を更新
 
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 21 * * 0"
+  push:
+    paths:
+      - .github/workflows/catalog.yml
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 目録と人気ランキングをダウンロード
+        run: |
+          UA="Mozilla/5.0 (gutenberg-reader catalog builder; +https://github.com/${GITHUB_REPOSITORY})"
+          curl -fL --retry 3 -A "$UA" -o pg_catalog.csv https://www.gutenberg.org/cache/epub/feeds/pg_catalog.csv
+          curl -fL --retry 3 -A "$UA" -o top.html https://www.gutenberg.org/browse/scores/top || echo "" > top.html
+
+      - name: catalog.json に変換
+        shell: python
+        run: |
+          import csv, json, re, datetime
+          def person(raw):
+              # "Austen, Jane, 1775-1817" → ("Jane Austen", "1775-1817")
+              raw = re.sub(r"\[[^\]]*\]", "", raw).strip()
+              m = re.match(r"^(.*?),\s*(-?\d{1,4}\??(?:\s*BCE)?-?\s*(?:-?\d{1,4}\??)?(?:\s*BCE)?)$", raw)
+              dates = ""
+              if m: raw, dates = m.group(1).strip(), m.group(2).strip()
+              parts = [p.strip() for p in raw.split(",") if p.strip()]
+              if len(parts) >= 2 and not re.search(r"\d", parts[1]):
+                  name = parts[1] + " " + parts[0]
+              else:
+                  name = parts[0] if parts else ""
+              name = re.sub(r"\s*\(.*?\)\s*", " ", name).strip()
+              return name, dates
+          cols = ["id", "t", "a", "ad", "lang", "sh", "sub", "iss"]
+          rows = []
+          with open("pg_catalog.csv", encoding="utf-8", newline="") as f:
+              for r in csv.DictReader(f):
+                  if (r.get("Type") or "Text") != "Text":
+                      continue
+                  tid = (r.get("Text#") or "").strip()
+                  if not tid.isdigit():
+                      continue
+                  title = re.sub(r"\s+", " ", (r.get("Title") or "").replace("\r", " ").replace("\n", " ")).strip()
+                  authors = [a for a in (r.get("Authors") or "").split(";") if a.strip()]
+                  name, dates = person(authors[0]) if authors else ("Anonymous", "")
+                  shelves = [s.strip().replace("Category: ", "") for s in (r.get("Bookshelves") or "").split(";") if s.strip()]
+                  subs = [s.strip() for s in (r.get("Subjects") or "").split(";") if s.strip()]
+                  rows.append([tid, title, name, dates, (r.get("Language") or "").replace(" ", ""),
+                               "|".join(shelves[:4]), "|".join(subs[:3]), (r.get("Issued") or "")[:10]])
+          if len(rows) < 10000:
+              raise SystemExit(f"作品数が少なすぎます（{len(rows)}件）。目録の形式が変わった可能性があります")
+          html = open("top.html", encoding="utf-8", errors="ignore").read()
+          sec = html.split('id="books-last30"', 1)[1] if 'id="books-last30"' in html else html
+          top = []
+          for n in re.findall(r"/ebooks/(\d+)", sec):
+              if n not in top: top.append(n)
+              if len(top) >= 100: break
+          out = {"at": datetime.date.today().isoformat(), "cols": cols, "rows": rows, "top": top}
+          with open("catalog.json", "w", encoding="utf-8") as f:
+              json.dump(out, f, ensure_ascii=False, separators=(",", ":"))
+          print(f"{len(rows)} 作品・人気 {len(top)} 作品")
+
+      - name: 保存
+        run: |
+          rm -f pg_catalog.csv top.html
+          git config user.name "github-actions[bot]"
+          git config user.email "41898299+github-actions[bot]@users.noreply.github.com"
+          git add catalog.json
+          git diff --cached --quiet || git commit -m "目録を更新"
+          git push
